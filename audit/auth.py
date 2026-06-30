@@ -13,7 +13,12 @@ is:
   5. CLAUDE_CODE_OAUTH_TOKEN (long-lived subscription token)
   6. Subscription OAuth credentials from `claude login`
 
-This module supports four modes, picked in this order:
+This module supports five modes, picked in this order:
+
+  - **bedrock**: `CLAUDE_CODE_USE_BEDROCK` is set (1/true/yes). Claude Code
+    authenticates to AWS Bedrock via the ambient AWS credentials (precedence
+    rung 1). We scrub `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` and leave
+    `AWS_*` / `CLAUDE_CODE_USE_BEDROCK` intact. No Anthropic credential needed.
 
   - **gateway**: `ANTHROPIC_BASE_URL` points away from anthropic.com AND
     `ANTHROPIC_AUTH_TOKEN` is set. Used for OpenRouter and similar.
@@ -56,7 +61,7 @@ from dotenv import load_dotenv
 
 @dataclass
 class AuthStatus:
-    auth_mode: str            # "gateway" | "api_key" | "oauth_token" | "keychain_login"
+    auth_mode: str            # "bedrock" | "gateway" | "api_key" | "oauth_token" | "keychain_login"
     api_key_scrubbed: bool
     auth_token_scrubbed: bool
     claude_cli_path: str | None
@@ -122,7 +127,22 @@ def configure_auth(
     auth_token_was_scrubbed = False
     creds_file: Path | None = None
 
-    if gateway:
+    use_bedrock = os.environ.get("CLAUDE_CODE_USE_BEDROCK", "").strip().lower() in ("1", "true", "yes")
+
+    if use_bedrock:
+        # Cloud-provider path (Bedrock): Claude Code authenticates to AWS via
+        # the ambient AWS credentials (precedence rung 1 — outranks every
+        # Anthropic credential). Scrub ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
+        # so a stale value can't interfere, and leave AWS_* and
+        # CLAUDE_CODE_USE_BEDROCK untouched. No Anthropic credential is needed.
+        if api_key_was_set:
+            del os.environ["ANTHROPIC_API_KEY"]
+            api_key_scrubbed = True
+        if "ANTHROPIC_AUTH_TOKEN" in os.environ:
+            del os.environ["ANTHROPIC_AUTH_TOKEN"]
+            auth_token_was_scrubbed = True
+        mode = "bedrock"
+    elif gateway:
         # Gateway path (OpenRouter / custom proxy / etc.): keep
         # ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN, but still drop
         # ANTHROPIC_API_KEY (rung 3 would outrank the gateway token).

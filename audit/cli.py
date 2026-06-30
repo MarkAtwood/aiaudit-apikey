@@ -67,7 +67,9 @@ def auth_check(allow_api_key: bool) -> None:
     except AuthError as e:
         console.print(f"[red]auth error:[/red] {e}")
         sys.exit(2)
-    if status.auth_mode == "oauth_token":
+    if status.auth_mode == "bedrock":
+        console.print("[green]OK[/green] using AWS Bedrock (CLAUDE_CODE_USE_BEDROCK)")
+    elif status.auth_mode == "oauth_token":
         console.print("[green]OK[/green] using CLAUDE_CODE_OAUTH_TOKEN")
     elif status.auth_mode == "api_key":
         console.print(

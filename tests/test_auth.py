@@ -1,6 +1,6 @@
 """Auth setup tests — env scrubbing + the four auth modes.
 
-Modes: gateway, api_key (opt-in), oauth_token, keychain_login.
+Modes: bedrock, gateway, api_key (opt-in), oauth_token, keychain_login.
 
 The api_key mode requires the caller to pass `allow_api_key=True` to
 configure_auth(). Without it, ANTHROPIC_API_KEY is scrubbed in favor of
@@ -241,3 +241,53 @@ def test_anthropic_base_url_does_not_trigger_gateway(
     assert status.auth_mode == "oauth_token"
     assert status.auth_token_scrubbed is True
     assert "ANTHROPIC_AUTH_TOKEN" not in os.environ
+
+
+# ---------- bedrock mode ----------
+
+
+def test_bedrock_mode_needs_no_anthropic_cred(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CLAUDE_CODE_USE_BEDROCK=1 selects bedrock mode with no Anthropic
+    credential present — Claude Code authenticates to AWS itself."""
+    _clear_all_auth_env(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+    monkeypatch.setattr(auth_mod, "CREDENTIALS_PATH", tmp_path / "no_creds.json")
+    _require_claude_cli()
+    status = configure_auth(env_file=_empty_env(tmp_path))
+    assert status.auth_mode == "bedrock"
+    # AWS env is left untouched for the SDK.
+    assert os.environ.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+
+
+def test_bedrock_scrubs_anthropic_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """In bedrock mode a stray ANTHROPIC_API_KEY is scrubbed so it can't
+    interfere with cloud-provider auth."""
+    _clear_all_auth_env(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "true")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-be-deleted")
+    monkeypatch.setattr(auth_mod, "CREDENTIALS_PATH", tmp_path / "no_creds.json")
+    _require_claude_cli()
+    status = configure_auth(env_file=_empty_env(tmp_path))
+    assert status.auth_mode == "bedrock"
+    assert status.api_key_scrubbed is True
+    assert "ANTHROPIC_API_KEY" not in os.environ
+
+
+def test_bedrock_outranks_api_key_and_oauth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bedrock (precedence rung 1) wins even when an API key (opted in)
+    and an OAuth token are also present."""
+    _clear_all_auth_env(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-fake")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "fake-oauth-token")
+    monkeypatch.setattr(auth_mod, "CREDENTIALS_PATH", tmp_path / "no_creds.json")
+    _require_claude_cli()
+    status = configure_auth(env_file=_empty_env(tmp_path), allow_api_key=True)
+    assert status.auth_mode == "bedrock"
+    assert "ANTHROPIC_API_KEY" not in os.environ
